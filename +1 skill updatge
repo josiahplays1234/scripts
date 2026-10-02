@@ -1,0 +1,918 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Folder & Config setup inside workspace
+local CONFIG_FOLDER = "workspace/+1 skill"
+local CONFIG_FILE_NAME = CONFIG_FOLDER .. "/NexusV2_Config.json"
+
+if makefolder and not isfolder(CONFIG_FOLDER) then
+	pcall(function() makefolder(CONFIG_FOLDER) end)
+end
+
+local TRACKER_MODIFIERS = {
+	["Sanguine"]       = Color3.fromRGB(255, 60, 60),
+	["Fortified"]      = Color3.fromRGB(60, 255, 100),
+	["Abyssal"]        = Color3.fromRGB(170, 60, 255),
+	["Ethereal"]       = Color3.fromRGB(120, 230, 255),
+	["Colossal"]       = Color3.fromRGB(200, 60, 220),
+	["Golden"]         = Color3.fromRGB(255, 210, 50),
+	["Indestructible"] = Color3.fromRGB(255, 130, 30),
+	["Godlike"]        = Color3.fromRGB(240, 245, 255),
+	["Rainbow"]        = Color3.fromRGB(60, 255, 180),
+	["Galactic"]       = Color3.fromRGB(190, 100, 255),
+	["Transcendental"] = Color3.fromRGB(70, 245, 235),
+	["Hacked"]         = Color3.fromRGB(45, 255, 110)
+}
+
+local ALL_MODIFIER_WORDS = {
+	"Sanguine", "Fortified", "Abyssal", "Ethereal", "Colossal", "Golden",
+	"Indestructible", "Godlike", "Rainbow", "Galactic", "Transcendental", "Hacked",
+	"Small", "Big", "Shiny", "Huge", "Lunar", "Electric", "Shielded", 
+	"Infernal", "Spectral", "Inverted", "Glacial", "Solar"
+}
+
+local IGNORED_NAMES = {
+	"dummy", "damage dummy", "damagedummy", "clone", "quest", "questgiver", "npc"
+}
+
+local FARM_TAB_NAME = "Auto Farm"
+local currentTab = FARM_TAB_NAME
+local farmSubTab = "Bosses"
+
+local activeTargets = {}         
+local knownMobTypes = {}         -- [mobName] = { isBoss = boolean }
+local selectedMobTypes = {}      
+local selectedModifiers = {}     
+local gemFarmEnabled = false
+local autoFarmEnabled = false
+local scriptRunning = true
+
+-- Pre-populate Bosses directly from workspace.BossSpawns
+local function populateBossesFromSpawns()
+	local bossSpawnsFolder = Workspace:FindFirstChild("BossSpawns")
+	if bossSpawnsFolder then
+		for _, child in ipairs(bossSpawnsFolder:GetChildren()) do
+			knownMobTypes[child.Name] = { isBoss = true }
+		end
+	end
+end
+
+populateBossesFromSpawns()
+
+-- UI Setup
+local parentGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or game:GetService("CoreGui")
+if parentGui:FindFirstChild("JosiahsScriptUI") then
+	parentGui.JosiahsScriptUI:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "JosiahsScriptUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = parentGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 380, 0, 480)
+mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(12, 13, 18)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(60, 65, 85)
+mainStroke.Thickness = 1.8
+mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+mainStroke.Parent = mainFrame
+
+local headerFrame = Instance.new("Frame")
+headerFrame.Size = UDim2.new(1, 0, 0, 50)
+headerFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 32)
+headerFrame.BorderSizePixel = 0
+headerFrame.Parent = mainFrame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 12)
+headerCorner.Parent = headerFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(0.44, 0, 1, 0)
+titleLabel.Position = UDim2.new(0.04, 0, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "⚡ josiahs script"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = headerFrame
+
+local farmToggleBtn = Instance.new("TextButton")
+farmToggleBtn.Size = UDim2.new(0.28, 0, 0, 28)
+farmToggleBtn.Position = UDim2.new(0.48, 0, 0.22, 0)
+farmToggleBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 70)
+farmToggleBtn.Text = "Farm: OFF"
+farmToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+farmToggleBtn.Font = Enum.Font.GothamBold
+farmToggleBtn.TextSize = 11
+farmToggleBtn.Parent = headerFrame
+
+local farmBtnCorner = Instance.new("UICorner")
+farmBtnCorner.CornerRadius = UDim.new(0, 6)
+farmBtnCorner.Parent = farmToggleBtn
+
+local unloadBtn = Instance.new("TextButton")
+unloadBtn.Size = UDim2.new(0.18, 0, 0, 28)
+unloadBtn.Position = UDim2.new(0.78, 0, 0.22, 0)
+unloadBtn.BackgroundColor3 = Color3.fromRGB(35, 38, 52)
+unloadBtn.Text = "Unload"
+unloadBtn.TextColor3 = Color3.fromRGB(180, 185, 205)
+unloadBtn.Font = Enum.Font.GothamBold
+unloadBtn.TextSize = 11
+unloadBtn.Parent = headerFrame
+
+local unloadCorner = Instance.new("UICorner")
+unloadCorner.CornerRadius = UDim.new(0, 6)
+unloadCorner.Parent = unloadBtn
+
+local configBar = Instance.new("Frame")
+configBar.Size = UDim2.new(0.92, 0, 0, 26)
+configBar.Position = UDim2.new(0.04, 0, 0.115, 0)
+configBar.BackgroundTransparency = 1
+configBar.Parent = mainFrame
+
+local function createConfigBtn(text, posX, sizeX, color)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(sizeX, 0, 1, 0)
+	btn.Position = UDim2.new(posX, 0, 0, 0)
+	btn.BackgroundColor3 = color or Color3.fromRGB(28, 32, 45)
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(220, 225, 240)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 10
+	btn.Parent = configBar
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 5)
+	corner.Parent = btn
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(50, 55, 75)
+	stroke.Thickness = 1
+	stroke.Parent = btn
+
+	return btn
+end
+
+local saveCfgBtn = createConfigBtn("💾 Save Cfg", 0, 0.31, Color3.fromRGB(35, 60, 45))
+local loadCfgBtn = createConfigBtn("📂 Load Cfg", 0.345, 0.31, Color3.fromRGB(35, 50, 75))
+local resetCfgBtn = createConfigBtn("🔄 Reset Cfg", 0.69, 0.31, Color3.fromRGB(65, 35, 40))
+
+local tabScroll = Instance.new("ScrollingFrame")
+tabScroll.Size = UDim2.new(0.92, 0, 0, 32)
+tabScroll.Position = UDim2.new(0.04, 0, 0.18, 0)
+tabScroll.BackgroundTransparency = 1
+tabScroll.ScrollBarThickness = 0
+tabScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+tabScroll.Parent = mainFrame
+
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.Parent = tabScroll
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabLayout.Padding = UDim.new(0, 6)
+
+local subTabFrame = Instance.new("Frame")
+subTabFrame.Name = "SubTabFrame"
+subTabFrame.Size = UDim2.new(0.92, 0, 0, 30)
+subTabFrame.Position = UDim2.new(0.04, 0, 0.26, 0)
+subTabFrame.BackgroundTransparency = 1
+subTabFrame.Parent = mainFrame
+
+local function createSubTabBtn(name, posX, sizeX)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(sizeX, 0, 1, 0)
+	btn.Position = UDim2.new(posX, 0, 0, 0)
+	btn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+	btn.Text = name
+	btn.TextColor3 = Color3.fromRGB(150, 155, 175)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 11
+	btn.Parent = subTabFrame
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = btn
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(45, 50, 68)
+	stroke.Thickness = 1
+	stroke.Parent = btn
+
+	return btn
+end
+
+local mobsSubBtn = createSubTabBtn("Mobs", 0, 0.23)
+local bossesSubBtn = createSubTabBtn("Bosses", 0.255, 0.23)
+local modifiersSubBtn = createSubTabBtn("Modifiers", 0.51, 0.23)
+local gemsSubBtn = createSubTabBtn("Gems 💎", 0.765, 0.235)
+
+bossesSubBtn.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+bossesSubBtn.TextColor3 = Color3.fromRGB(15, 16, 20)
+
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(0.92, 0, 0.64, 0)
+scrollFrame.Position = UDim2.new(0.04, 0, 0.33, 0)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.ScrollBarThickness = 3
+scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 85, 110)
+scrollFrame.Parent = mainFrame
+
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Parent = scrollFrame
+uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+uiListLayout.Padding = UDim.new(0, 6)
+
+local function saveConfig()
+	local data = {
+		selectedMobTypes = selectedMobTypes,
+		selectedModifiers = selectedModifiers,
+		autoFarmEnabled = autoFarmEnabled,
+		gemFarmEnabled = gemFarmEnabled
+	}
+	if writefile then
+		if makefolder and not isfolder(CONFIG_FOLDER) then
+			pcall(function() makefolder(CONFIG_FOLDER) end)
+		end
+		local success, err = pcall(function()
+			writefile(CONFIG_FILE_NAME, HttpService:JSONEncode(data))
+		end)
+		if success then
+			saveCfgBtn.Text = "Saved! ✔"
+			task.delay(1.5, function() saveCfgBtn.Text = "💾 Save Cfg" end)
+		end
+	end
+end
+
+local function loadConfig()
+	if isfile and isfile(CONFIG_FILE_NAME) and readfile then
+		local success, result = pcall(function()
+			return HttpService:JSONDecode(readfile(CONFIG_FILE_NAME))
+		end)
+		if success and type(result) == "table" then
+			selectedMobTypes = result.selectedMobTypes or {}
+			selectedModifiers = result.selectedModifiers or {}
+			autoFarmEnabled = result.autoFarmEnabled or false
+			gemFarmEnabled = result.gemFarmEnabled or false
+
+			farmToggleBtn.BackgroundColor3 = autoFarmEnabled and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(220, 50, 70)
+			farmToggleBtn.Text = autoFarmEnabled and "Farm: ON" or "Farm: OFF"
+
+			loadCfgBtn.Text = "Loaded! ✔"
+			task.delay(1.5, function() loadCfgBtn.Text = "📂 Load Cfg" end)
+			updateUI()
+		end
+	end
+end
+
+local function resetConfig()
+	selectedMobTypes = {}
+	selectedModifiers = {}
+	autoFarmEnabled = false
+	gemFarmEnabled = false
+
+	farmToggleBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 70)
+	farmToggleBtn.Text = "Farm: OFF"
+
+	if isfile and isfile(CONFIG_FILE_NAME) and delfile then
+		pcall(function() delfile(CONFIG_FILE_NAME) end)
+	end
+
+	resetCfgBtn.Text = "Reset! ✔"
+
+task.delay(1.5, function() resetCfgBtn.Text = "🔄 Reset Cfg" end)
+updateUI()
+end
+saveCfgBtn.MouseButton1Click:Connect(saveConfig)
+loadCfgBtn.MouseButton1Click:Connect(loadConfig)
+resetCfgBtn.MouseButton1Click:Connect(resetConfig)
+local function getAllSpawnedGems()
+local gems = {}
+local gemFolderNames = {"SpawnedGems", "Spawned Gems", "Gems", "GemSpawns", "Spawned_Gems"}
+for _, folderName in ipairs(gemFolderNames) do
+local folder = Workspace:FindFirstChild(folderName)
+if folder then
+for _, child in ipairs(folder:GetChildren()) do
+table.insert(gems, child)
+end
+end
+end
+for _, child in ipairs(Workspace:GetChildren()) do
+if (child:IsA("BasePart") or child:IsA("MeshPart") or child:IsA("Model")) then
+local lowerName = string.lower(child.Name)
+if string.find(lowerName, "gem") and not Players:GetPlayerFromCharacter(child) then
+if not table.find(gems, child) then
+table.insert(gems, child)
+end
+end
+end
+end
+return gems
+end
+local function getCleanMobName(rawName)
+local cleanName = rawName
+for _, modName in ipairs(ALL_MODIFIER_WORDS) do
+local variations = {modName, string.lower(modName), string.upper(modName)}
+for _, modVar in ipairs(variations) do
+cleanName = string.gsub(cleanName, "%[" .. modVar .. "%]", "")
+cleanName = string.gsub(cleanName, "%(" .. modVar .. "%)", "")
+cleanName = string.gsub(cleanName, "%f[%a]" .. modVar .. "%f[%A]", "")
+end
+end
+cleanName = string.gsub(cleanName, "[%[%]%(%)]", "")
+cleanName = string.gsub(cleanName, "^%s*%-%s", "")
+cleanName = string.gsub(cleanName, "%s*%-%s$", "")
+cleanName = string.gsub(cleanName, "%s+", " ")
+cleanName = string.gsub(cleanName, "^%s*(.-)%s*$", "%1")
+return (cleanName ~= "" and cleanName) or rawName
+end
+local function isValidMob(model)
+if not model or not model:IsA("Model") then return false end
+if model == LocalPlayer.Character or Players:GetPlayerFromCharacter(model) then return false end
+local lowerName = string.lower(model.Name)
+if lowerName == "game" then return false end
+for _, filter in ipairs(IGNORED_NAMES) do
+if string.find(lowerName, filter) then return false end
+end
+local hum = model:FindFirstChildOfClass("Humanoid")
+if not hum or hum.Health <= 0 then return false end
+return true
+end
+local function teleportTo(targetObject, offset)
+local character = LocalPlayer.Character
+if not character then return end
+local rootPart = character:FindFirstChild("HumanoidRootPart")
+if not rootPart or not targetObject then return end
+local targetCFrame = nil
+if targetObject:IsA("BasePart") then
+targetCFrame = targetObject.CFrame
+elseif targetObject:IsA("Model") then
+local part = targetObject:FindFirstChild("HumanoidRootPart")
+or targetObject:FindFirstChild("Head")
+or targetObject.PrimaryPart
+or targetObject:FindFirstChildOfClass("BasePart")
+if part then targetCFrame = part.CFrame end
+end
+if targetCFrame then
+rootPart.CFrame = targetCFrame * (offset or CFrame.new(0, 0, 0))
+end
+end
+local function attackWithNatureKnife()
+local char = LocalPlayer.Character
+local backpack = LocalPlayer:FindFirstChild("Backpack")
+local tool = (backpack and backpack:FindFirstChild("Nature Knife"))
+or (char and char:FindFirstChild("Nature Knife"))
+if tool then
+if char and tool.Parent ~= char then
+tool.Parent = char
+end
+local attackRemote = tool:FindFirstChild("AttackPhysical")
+if attackRemote then
+if attackRemote:IsA("RemoteEvent") then
+attackRemote:FireServer()
+elseif attackRemote:IsA("RemoteFunction") then
+attackRemote:InvokeServer()
+elseif attackRemote:IsA("BindableEvent") then
+attackRemote:Fire()
+end
+end
+tool:Activate()
+end
+end
+local function applyESP(targetModel, modifierName, color)
+if not (targetModel:IsA("Model") or targetModel:IsA("BasePart")) then return end
+if targetModel:FindFirstChild("ESPHighlight") then return end
+local adornPart = targetModel:FindFirstChild("HumanoidRootPart")
+or targetModel:FindFirstChild("Head")
+or (targetModel:IsA("Model") and targetModel.PrimaryPart)
+or (targetModel:IsA("BasePart") and targetModel)
+or targetModel:FindFirstChildOfClass("BasePart")
+if not adornPart then return end
+local highlight = Instance.new("Highlight")
+highlight.Name = "ESPHighlight"
+highlight.Adornee = targetModel
+highlight.FillColor = color
+highlight.FillTransparency = 0.4
+highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+highlight.Parent = targetModel
+local billboard = Instance.new("BillboardGui")
+billboard.Name = "ESPLabelGui"
+billboard.Adornee = adornPart
+billboard.Size = UDim2.new(0, 250, 0, 50)
+billboard.StudsOffset = Vector3.new(0, 5, 0)
+billboard.AlwaysOnTop = true
+local textLabel = Instance.new("TextLabel")
+textLabel.Size = UDim2.new(1, 0, 1, 0)
+textLabel.BackgroundTransparency = 1
+textLabel.TextColor3 = color
+textLabel.TextStrokeTransparency = 0
+textLabel.Font = Enum.Font.GothamBold
+textLabel.TextSize = 16
+textLabel.Text = "[" .. modifierName .. "] " .. targetModel.Name
+textLabel.Parent = billboard
+billboard.Parent = targetModel
+end
+local function checkInstance(instance)
+if instance:IsDescendantOf(Workspace:FindFirstChild("BorderParts")) then return nil end
+if not isValidMob(instance) and not instance:IsA("BasePart") then return nil end
+local lowerInstName = string.lower(instance.Name)
+for modName, _ in pairs(TRACKER_MODIFIERS) do
+local lowerMod = string.lower(modName)
+if string.find(lowerInstName, lowerMod) then
+local parentModel = instance:IsA("Model") and instance or instance:FindFirstAncestorOfClass("Model")
+if parentModel and isValidMob(parentModel) then
+return parentModel, modName
+end
+end
+end
+return nil
+end
+local function registerMobName(model)
+if isValidMob(model) then
+local cleanName = getCleanMobName(model.Name)
+local bossSpawnsFolder = Workspace:FindFirstChild("BossSpawns")
+-- If it's already registered as a boss, keep it as a boss
+if knownMobTypes[cleanName] and knownMobTypes[cleanName].isBoss then
+return
+end
+local isBoss = false
+if bossSpawnsFolder and bossSpawnsFolder:FindFirstChild(cleanName) then
+isBoss = true
+end
+if knownMobTypes[cleanName] == nil then
+knownMobTypes[cleanName] = { isBoss = isBoss }
+if currentTab == FARM_TAB_NAME then updateUI() end
+end
+end
+end
+local function unloadScript()
+scriptRunning = false
+autoFarmEnabled = false
+gemFarmEnabled = false
+for target, _ in pairs(activeTargets) do
+if target and target.Parent then
+local espHighlight = target:FindFirstChild("ESPHighlight")
+if espHighlight then espHighlight:Destroy() end
+local espGui = target:FindFirstChild("ESPLabelGui")
+if espGui then espGui:Destroy() end
+end
+end
+for _, desc in ipairs(Workspace:GetDescendants()) do
+if desc.Name == "ESPHighlight" or desc.Name == "ESPLabelGui" then desc:Destroy() end
+end
+table.clear(activeTargets)
+table.clear(knownMobTypes)
+table.clear(selectedMobTypes)
+table.clear(selectedModifiers)
+screenGui:Destroy()
+end
+unloadBtn.MouseButton1Click:Connect(unloadScript)
+function updateUI()
+if not scriptRunning or not screenGui.Parent then return end
+if currentTab == FARM_TAB_NAME then
+subTabFrame.Visible = true
+scrollFrame.Size = UDim2.new(0.92, 0, 0.64, 0)
+scrollFrame.Position = UDim2.new(0.04, 0, 0.33, 0)
+else
+subTabFrame.Visible = false
+scrollFrame.Size = UDim2.new(0.92, 0, 0.72, 0)
+scrollFrame.Position = UDim2.new(0.04, 0, 0.25, 0)
+end
+for _, child in ipairs(scrollFrame:GetChildren()) do
+if child:IsA("Frame") then child:Destroy() end
+end
+if currentTab == FARM_TAB_NAME then
+if farmSubTab == "Gems" then
+local toggleFrame = Instance.new("Frame")
+toggleFrame.Size = UDim2.new(1, 0, 0, 44)
+toggleFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+toggleFrame.BorderSizePixel = 0
+toggleFrame.Parent = scrollFrame
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 6)
+toggleCorner.Parent = toggleFrame
+local toggleStroke = Instance.new("UIStroke")
+toggleStroke.Color = Color3.fromRGB(38, 42, 58)
+toggleStroke.Thickness = 1
+toggleStroke.Parent = toggleFrame
+local nameLabel = Instance.new("TextLabel")
+nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
+nameLabel.Position = UDim2.new(0.04, 0, 0, 0)
+nameLabel.BackgroundTransparency = 1
+nameLabel.Text = "💎 Auto Pick Gems"
+nameLabel.TextColor3 = Color3.fromRGB(120, 230, 255)
+nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+nameLabel.Font = Enum.Font.GothamBold
+nameLabel.TextSize = 12
+nameLabel.Parent = toggleFrame
+local autoBtn = Instance.new("TextButton")
+autoBtn.Size = UDim2.new(0.26, 0, 0.65, 0)
+autoBtn.Position = UDim2.new(0.70, 0, 0.175, 0)
+autoBtn.BackgroundColor3 = gemFarmEnabled and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(35, 38, 52)
+autoBtn.Text = gemFarmEnabled and "Farm: ON" or "Farm: OFF"
+autoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoBtn.Font = Enum.Font.GothamBold
+autoBtn.TextSize = 10
+autoBtn.Parent = toggleFrame
+local autoCorner = Instance.new("UICorner")
+autoCorner.CornerRadius = UDim.new(0, 4)
+autoCorner.Parent = autoBtn
+autoBtn.MouseButton1Click:Connect(function()
+gemFarmEnabled = not gemFarmEnabled
+autoBtn.BackgroundColor3 = gemFarmEnabled and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(35, 38, 52)
+autoBtn.Text = gemFarmEnabled and "Farm: ON" or "Farm: OFF"
+end)
+local gemList = getAllSpawnedGems()
+for idx, gemObj in ipairs(gemList) do
+local gemFrame = Instance.new("Frame")
+gemFrame.Size = UDim2.new(1, 0, 0, 36)
+gemFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+gemFrame.BorderSizePixel = 0
+gemFrame.Parent = scrollFrame
+local gemCorner = Instance.new("UICorner")
+gemCorner.CornerRadius = UDim.new(0, 6)
+gemCorner.Parent = gemFrame
+local gemStroke = Instance.new("UIStroke")
+gemStroke.Color = Color3.fromRGB(38, 42, 58)
+gemStroke.Thickness = 1
+gemStroke.Parent = gemFrame
+local gemNameLbl = Instance.new("TextLabel")
+gemNameLbl.Size = UDim2.new(0.65, 0, 1, 0)
+gemNameLbl.Position = UDim2.new(0.04, 0, 0, 0)
+gemNameLbl.BackgroundTransparency = 1
+gemNameLbl.Text = "💎 " .. gemObj.Name .. " #" .. tostring(idx)
+gemNameLbl.TextColor3 = Color3.fromRGB(220, 225, 235)
+gemNameLbl.TextXAlignment = Enum.TextXAlignment.Left
+gemNameLbl.Font = Enum.Font.GothamBold
+gemNameLbl.TextSize = 11
+gemNameLbl.Parent = gemFrame
+local tpGemBtn = Instance.new("TextButton")
+tpGemBtn.Size = UDim2.new(0.24, 0, 0.7, 0)
+tpGemBtn.Position = UDim2.new(0.72, 0, 0.15, 0)
+tpGemBtn.BackgroundColor3 = Color3.fromRGB(120, 230, 255)
+tpGemBtn.Text = "TP"
+tpGemBtn.TextColor3 = Color3.fromRGB(15, 16, 20)
+tpGemBtn.Font = Enum.Font.GothamBold
+tpGemBtn.TextSize = 11
+tpGemBtn.Parent = gemFrame
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 4)
+btnCorner.Parent = tpGemBtn
+tpGemBtn.MouseButton1Click:Connect(function()
+teleportTo(gemObj)
+end)
+end
+elseif farmSubTab == "Modifiers" then
+local sortedMods = {}
+for modName, _ in pairs(TRACKER_MODIFIERS) do table.insert(sortedMods, modName) end
+table.sort(sortedMods)
+for _, modName in ipairs(sortedMods) do
+local itemFrame = Instance.new("Frame")
+itemFrame.Size = UDim2.new(1, 0, 0, 36)
+itemFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+itemFrame.BorderSizePixel = 0
+itemFrame.Parent = scrollFrame
+local itemCorner = Instance.new("UICorner")
+itemCorner.CornerRadius = UDim.new(0, 6)
+itemCorner.Parent = itemFrame
+local itemStroke = Instance.new("UIStroke")
+itemStroke.Color = Color3.fromRGB(38, 42, 58)
+itemStroke.Thickness = 1
+itemStroke.Parent = itemFrame
+local nameLabel = Instance.new("TextLabel")
+nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
+nameLabel.Position = UDim2.new(0.04, 0, 0, 0)
+nameLabel.BackgroundTransparency = 1
+nameLabel.Text = modName
+nameLabel.TextColor3 = TRACKER_MODIFIERS[modName] or Color3.fromRGB(230, 230, 230)
+nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+nameLabel.Font = Enum.Font.GothamBold
+nameLabel.TextSize = 12
+nameLabel.Parent = itemFrame
+local isSelected = selectedModifiers[modName] or false
+local autoBtn = Instance.new("TextButton")
+autoBtn.Size = UDim2.new(0.26, 0, 0.7, 0)
+autoBtn.Position = UDim2.new(0.70, 0, 0.15, 0)
+autoBtn.BackgroundColor3 = isSelected and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(35, 38, 52)
+autoBtn.Text = isSelected and "Farm: ON" or "Farm: OFF"
+autoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoBtn.Font = Enum.Font.GothamBold
+autoBtn.TextSize = 10
+autoBtn.Parent = itemFrame
+local autoCorner = Instance.new("UICorner")
+autoCorner.CornerRadius = UDim.new(0, 4)
+autoCorner.Parent = autoBtn
+autoBtn.MouseButton1Click:Connect(function()
+selectedModifiers[modName] = not selectedModifiers[modName]
+autoBtn.BackgroundColor3 = selectedModifiers[modName] and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(35, 38, 52)
+autoBtn.Text = selectedModifiers[modName] and "Farm: ON" or "Farm: OFF"
+end)
+end
+else
+local sortedMobNames = {}
+for mobName, data in pairs(knownMobTypes) do
+local isBoss = type(data) == "table" and data.isBoss or false
+if (farmSubTab == "Bosses" and isBoss) or (farmSubTab == "Mobs" and not isBoss) then
+table.insert(sortedMobNames, mobName)
+end
+end
+table.sort(sortedMobNames)
+for _, mobName in ipairs(sortedMobNames) do
+local itemFrame = Instance.new("Frame")
+itemFrame.Size = UDim2.new(1, 0, 0, 36)
+itemFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+itemFrame.BorderSizePixel = 0
+itemFrame.Parent = scrollFrame
+local itemCorner = Instance.new("UICorner")
+itemCorner.CornerRadius = UDim.new(0, 6)
+itemCorner.Parent = itemFrame
+local itemStroke = Instance.new("UIStroke")
+itemStroke.Color = Color3.fromRGB(38, 42, 58)
+itemStroke.Thickness = 1
+itemStroke.Parent = itemFrame
+local nameLabel = Instance.new("TextLabel")
+nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
+nameLabel.Position = UDim2.new(0.04, 0, 0, 0)
+nameLabel.BackgroundTransparency = 1
+nameLabel.Text = mobName
+nameLabel.TextColor3 = Color3.fromRGB(220, 225, 235)
+nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+nameLabel.Font = Enum.Font.GothamBold
+nameLabel.TextSize = 12
+nameLabel.Parent = itemFrame
+local isSelected = selectedMobTypes[mobName] or false
+local autoBtn = Instance.new("TextButton")
+autoBtn.Size = UDim2.new(0.26, 0, 0.7, 0)
+autoBtn.Position = UDim2.new(0.70, 0, 0.15, 0)
+autoBtn.BackgroundColor3 = isSelected and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(35, 38, 52)
+autoBtn.Text = isSelected and "Farm: ON" or "Farm: OFF"
+autoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoBtn.Font = Enum.Font.GothamBold
+autoBtn.TextSize = 10
+autoBtn.Parent = itemFrame
+local autoCorner = Instance.new("UICorner")
+autoCorner.CornerRadius = UDim.new(0, 4)
+autoCorner.Parent = autoBtn
+autoBtn.MouseButton1Click:Connect(function()
+selectedMobTypes[mobName] = not selectedMobTypes[mobName]
+autoBtn.BackgroundColor3 = selectedMobTypes[mobName] and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(35, 38, 52)
+autoBtn.Text = selectedMobTypes[mobName] and "Farm: ON" or "Farm: OFF"
+end)
+end
+end
+else
+for target, modName in pairs(activeTargets) do
+if target and target.Parent and modName == currentTab and isValidMob(target) then
+applyESP(target, currentTab, TRACKER_MODIFIERS[currentTab])
+local itemFrame = Instance.new("Frame")
+itemFrame.Size = UDim2.new(1, 0, 0, 36)
+itemFrame.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+itemFrame.BorderSizePixel = 0
+itemFrame.Parent = scrollFrame
+local itemCorner = Instance.new("UICorner")
+itemCorner.CornerRadius = UDim.new(0, 6)
+itemCorner.Parent = itemFrame
+local itemStroke = Instance.new("UIStroke")
+itemStroke.Color = Color3.fromRGB(38, 42, 58)
+itemStroke.Thickness = 1
+itemStroke.Parent = itemFrame
+local nameLabel = Instance.new("TextLabel")
+nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
+nameLabel.Position = UDim2.new(0.04, 0, 0, 0)
+nameLabel.BackgroundTransparency = 1
+nameLabel.Text = target.Name
+nameLabel.TextColor3 = TRACKER_MODIFIERS[currentTab]
+nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+nameLabel.Font = Enum.Font.GothamBold
+nameLabel.TextSize = 12
+nameLabel.Parent = itemFrame
+local tpButton = Instance.new("TextButton")
+tpButton.Size = UDim2.new(0.24, 0, 0.7, 0)
+tpButton.Position = UDim2.new(0.72, 0, 0.15, 0)
+tpButton.BackgroundColor3 = TRACKER_MODIFIERS[currentTab]
+tpButton.Text = "TP"
+tpButton.TextColor3 = Color3.fromRGB(15, 16, 20)
+tpButton.Font = Enum.Font.GothamBold
+tpButton.TextSize = 11
+tpButton.Parent = itemFrame
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 4)
+btnCorner.Parent = tpButton
+tpButton.MouseButton1Click:Connect(function()
+teleportTo(target)
+end)
+end
+end
+end
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
+end
+local function updateSubTabStyles()
+mobsSubBtn.BackgroundColor3 = (farmSubTab == "Mobs") and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(25, 28, 38)
+mobsSubBtn.TextColor3 = (farmSubTab == "Mobs") and Color3.fromRGB(15, 16, 20) or Color3.fromRGB(150, 155, 175)
+bossesSubBtn.BackgroundColor3 = (farmSubTab == "Bosses") and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(25, 28, 38)
+bossesSubBtn.TextColor3 = (farmSubTab == "Bosses") and Color3.fromRGB(15, 16, 20) or Color3.fromRGB(150, 155, 175)
+modifiersSubBtn.BackgroundColor3 = (farmSubTab == "Modifiers") and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(25, 28, 38)
+modifiersSubBtn.TextColor3 = (farmSubTab == "Modifiers") and Color3.fromRGB(15, 16, 20) or Color3.fromRGB(150, 155, 175)
+gemsSubBtn.BackgroundColor3 = (farmSubTab == "Gems") and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(25, 28, 38)
+gemsSubBtn.TextColor3 = (farmSubTab == "Gems") and Color3.fromRGB(15, 16, 20) or Color3.fromRGB(150, 155, 175)
+updateUI()
+end
+mobsSubBtn.MouseButton1Click:Connect(function() farmSubTab = "Mobs"; updateSubTabStyles() end)
+bossesSubBtn.MouseButton1Click:Connect(function() farmSubTab = "Bosses"; updateSubTabStyles() end)
+modifiersSubBtn.MouseButton1Click:Connect(function() farmSubTab = "Modifiers"; updateSubTabStyles() end)
+gemsSubBtn.MouseButton1Click:Connect(function() farmSubTab = "Gems"; updateSubTabStyles() end)
+farmToggleBtn.MouseButton1Click:Connect(function()
+autoFarmEnabled = not autoFarmEnabled
+farmToggleBtn.BackgroundColor3 = autoFarmEnabled and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(220, 50, 70)
+farmToggleBtn.Text = autoFarmEnabled and "Farm: ON" or "Farm: OFF"
+end)
+local function registerTarget(target, modName)
+if not scriptRunning then return end
+if not activeTargets[target] then
+activeTargets[target] = modName
+applyESP(target, modName, TRACKER_MODIFIERS[modName])
+if modName == currentTab then updateUI() end
+end
+end
+Workspace.DescendantAdded:Connect(function(desc)
+if not scriptRunning then return end
+if desc:IsA("Humanoid") and desc.Parent and desc.Parent:IsA("Model") then
+registerMobName(desc.Parent)
+end
+local target, modName = checkInstance(desc)
+if target then registerTarget(target, modName) end
+end)
+Workspace.DescendantRemoving:Connect(function(desc)
+if activeTargets[desc] then activeTargets[desc] = nil end
+end)
+local function createTabs()
+local farmTabBtn = Instance.new("TextButton")
+farmTabBtn.Name = FARM_TAB_NAME .. "Tab"
+farmTabBtn.Size = UDim2.new(0, 98, 1, 0)
+farmTabBtn.BackgroundColor3 = (currentTab == FARM_TAB_NAME) and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(25, 28, 38)
+farmTabBtn.Text = "⚔ " .. FARM_TAB_NAME
+farmTabBtn.TextColor3 = (currentTab == FARM_TAB_NAME) and Color3.fromRGB(15, 16, 20) or Color3.fromRGB(255, 170, 0)
+farmTabBtn.Font = Enum.Font.GothamBold
+farmTabBtn.TextSize = 11
+farmTabBtn.Parent = tabScroll
+local farmTabCorner = Instance.new("UICorner")
+farmTabCorner.CornerRadius = UDim.new(0, 6)
+farmTabCorner.Parent = farmTabBtn
+farmTabBtn.MouseButton1Click:Connect(function()
+currentTab = FARM_TAB_NAME
+for _, btn in ipairs(tabScroll:GetChildren()) do
+if btn:IsA("TextButton") then
+if btn.Name == FARM_TAB_NAME .. "Tab" then
+btn.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+btn.TextColor3 = Color3.fromRGB(15, 16, 20)
+else
+local bName = string.gsub(btn.Name, "Tab", "")
+btn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+btn.TextColor3 = TRACKER_MODIFIERS[bName] or Color3.fromRGB(255, 255, 255)
+end
+end
+end
+updateUI()
+end)
+for modName, color in pairs(TRACKER_MODIFIERS) do
+local tabBtn = Instance.new("TextButton")
+tabBtn.Name = modName .. "Tab"
+tabBtn.Size = UDim2.new(0, 92, 1, 0)
+tabBtn.BackgroundColor3 = (modName == currentTab) and color or Color3.fromRGB(25, 28, 38)
+tabBtn.Text = modName
+tabBtn.TextColor3 = (modName == currentTab) and Color3.fromRGB(15, 16, 20) or color
+tabBtn.Font = Enum.Font.GothamBold
+tabBtn.TextSize = 11
+tabBtn.Parent = tabScroll
+local tabCorner = Instance.new("UICorner")
+tabCorner.CornerRadius = UDim.new(0, 6)
+tabCorner.Parent = tabBtn
+tabBtn.MouseButton1Click:Connect(function()
+currentTab = modName
+for _, btn in ipairs(tabScroll:GetChildren()) do
+if btn:IsA("TextButton") then
+if btn.Name == FARM_TAB_NAME .. "Tab" then
+btn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+btn.TextColor3 = Color3.fromRGB(255, 170, 0)
+else
+local bName = string.gsub(btn.Name, "Tab", "")
+if bName == currentTab then
+btn.BackgroundColor3 = TRACKER_MODIFIERS[bName]
+btn.TextColor3 = Color3.fromRGB(15, 16, 20)
+else
+btn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
+btn.TextColor3 = TRACKER_MODIFIERS[bName]
+end
+end
+end
+end
+updateUI()
+end)
+end
+tabScroll.CanvasSize = UDim2.new(0, tabLayout.AbsoluteContentSize.X, 0, 0)
+end
+createTabs()
+for _, desc in ipairs(Workspace:GetDescendants()) do
+if desc:IsA("Humanoid") and desc.Parent then registerMobName(desc.Parent) end
+local target, modName = checkInstance(desc)
+if target then
+activeTargets[target] = modName
+applyESP(target, modName, TRACKER_MODIFIERS[modName])
+end
+end
+loadConfig()
+updateUI()
+-- Auto-Farm Loop Routine
+task.spawn(function()
+while scriptRunning do
+task.wait(0.1)
+if autoFarmEnabled and scriptRunning then
+local foundTarget = false
+-- Priority 0: Gem Collection Routine
+if gemFarmEnabled then
+local gemList = getAllSpawnedGems()
+for _, gemObj in ipairs(gemList) do
+if not autoFarmEnabled or not gemFarmEnabled or not scriptRunning then break end
+if gemObj and gemObj.Parent then
+foundTarget = true
+teleportTo(gemObj)
+local prompt = gemObj:FindFirstChildOfClass("ProximityPrompt") or gemObj:FindFirstChildWhichIsA("ProximityPrompt", true)
+if prompt then
+fireproximityprompt(prompt)
+end
+local targetPart = gemObj:IsA("BasePart") and gemObj or gemObj:FindFirstChildOfClass("BasePart")
+local char = LocalPlayer.Character
+if targetPart and char and char:FindFirstChild("HumanoidRootPart") then
+firetouchinterest(char.HumanoidRootPart, targetPart, false)
+task.wait(0.02)
+firetouchinterest(char.HumanoidRootPart, targetPart, true)
+end
+task.wait(0.12)
+end
+end
+end
+-- Priority 1: Modifier Auto Farm Targets
+if not foundTarget then
+for targetModel, modName in pairs(activeTargets) do
+if not autoFarmEnabled or not scriptRunning then break end
+if selectedModifiers[modName] and isValidMob(targetModel) then
+foundTarget = true
+teleportTo(targetModel)
+attackWithNatureKnife()
+task.wait(0.08)
+end
+end
+end
+-- Priority 2: Mobs/Bosses Auto Farm Targets (Active character entities in Workspace)
+if not foundTarget then
+for _, desc in ipairs(Workspace:GetDescendants()) do
+if not autoFarmEnabled or not scriptRunning then break end
+if desc:IsA("Humanoid") then
+local model = desc.Parent
+if isValidMob(model) then
+local cleanName = getCleanMobName(model.Name)
+if selectedMobTypes[cleanName] then
+foundTarget = true
+teleportTo(model)
+attackWithNatureKnife()
+task.wait(0.08)
+end
+end
+end
+end
+end
+-- Priority 3: Fallback Boss Spawn Location Teleport (If boss is not currently spawned, stay at spawn location)
+if not foundTarget and autoFarmEnabled then
+local bossSpawnsFolder = Workspace:FindFirstChild("BossSpawns")
+if bossSpawnsFolder then
+for selectedMob, enabled in pairs(selectedMobTypes) do
+if enabled then
+local spawnObj = bossSpawnsFolder:FindFirstChild(selectedMob)
+if spawnObj then
+teleportTo(spawnObj)
+task.wait(0.3)
+end
+end
+end
+end
+end
+end
+end
+end)
