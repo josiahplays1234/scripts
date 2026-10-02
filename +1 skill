@@ -4,12 +4,8 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 -- Folder & Config setup inside workspace
-local CONFIG_FOLDER = "workspace/+1 skill"
+local CONFIG_FOLDER = "NexusV2_Configs"
 local CONFIG_FILE_NAME = CONFIG_FOLDER .. "/NexusV2_Config.json"
-
-if makefolder and not isfolder(CONFIG_FOLDER) then
-	pcall(function() makefolder(CONFIG_FOLDER) end)
-end
 
 local TRACKER_MODIFIERS = {
 	["Sanguine"]       = Color3.fromRGB(255, 60, 60),
@@ -239,51 +235,65 @@ uiListLayout.Parent = scrollFrame
 uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 uiListLayout.Padding = UDim.new(0, 6)
 
+-- Fixed Config Handler
 local function saveConfig()
+	if not writefile then return end
+
+	if makefolder and not isfolder(CONFIG_FOLDER) then
+		pcall(function() makefolder(CONFIG_FOLDER) end)
+	end
+
 	local data = {
 		selectedMobTypes = selectedMobTypes,
 		selectedModifiers = selectedModifiers,
 		autoFarmEnabled = autoFarmEnabled,
 		gemFarmEnabled = gemFarmEnabled
 	}
-	if writefile then
-		if makefolder and not isfolder(CONFIG_FOLDER) then
-			pcall(function() makefolder(CONFIG_FOLDER) end)
-		end
-		local success, err = pcall(function()
-			writefile(CONFIG_FILE_NAME, HttpService:JSONEncode(data))
-		end)
-		if success then
-			saveCfgBtn.Text = "Saved! ✔"
-			task.delay(1.5, function() saveCfgBtn.Text = "💾 Save Cfg" end)
-		end
+
+	local success, _err = pcall(function()
+		local json = HttpService:JSONEncode(data)
+		writefile(CONFIG_FILE_NAME, json)
+	end)
+
+	if success then
+		saveCfgBtn.Text = "Saved! ✔"
+		task.delay(1.5, function() saveCfgBtn.Text = "💾 Save Cfg" end)
+	else
+		saveCfgBtn.Text = "Error ❌"
+		task.delay(1.5, function() saveCfgBtn.Text = "💾 Save Cfg" end)
 	end
 end
 
 local function loadConfig()
-	if isfile and isfile(CONFIG_FILE_NAME) and readfile then
-		local success, result = pcall(function()
-			return HttpService:JSONDecode(readfile(CONFIG_FILE_NAME))
-		end)
-		if success and type(result) == "table" then
-			selectedMobTypes = result.selectedMobTypes or {}
-			selectedModifiers = result.selectedModifiers or {}
-			autoFarmEnabled = result.autoFarmEnabled or false
-			gemFarmEnabled = result.gemFarmEnabled or false
+	if not isfile or not readfile then return end
+	if not isfile(CONFIG_FILE_NAME) then return end
 
-			farmToggleBtn.BackgroundColor3 = autoFarmEnabled and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(220, 50, 70)
-			farmToggleBtn.Text = autoFarmEnabled and "Farm: ON" or "Farm: OFF"
+	local success, result = pcall(function()
+		local rawText = readfile(CONFIG_FILE_NAME)
+		return HttpService:JSONDecode(rawText)
+	end)
 
-			loadCfgBtn.Text = "Loaded! ✔"
-			task.delay(1.5, function() loadCfgBtn.Text = "📂 Load Cfg" end)
-			updateUI()
-		end
+	if success and type(result) == "table" then
+		selectedMobTypes = result.selectedMobTypes or {}
+		selectedModifiers = result.selectedModifiers or {}
+		autoFarmEnabled = result.autoFarmEnabled or false
+		gemFarmEnabled = result.gemFarmEnabled or false
+
+		farmToggleBtn.BackgroundColor3 = autoFarmEnabled and Color3.fromRGB(45, 190, 90) or Color3.fromRGB(220, 50, 70)
+		farmToggleBtn.Text = autoFarmEnabled and "Farm: ON" or "Farm: OFF"
+
+		loadCfgBtn.Text = "Loaded! ✔"
+		task.delay(1.5, function() loadCfgBtn.Text = "📂 Load Cfg" end)
+		updateUI()
+	else
+		loadCfgBtn.Text = "Error ❌"
+		task.delay(1.5, function() loadCfgBtn.Text = "📂 Load Cfg" end)
 	end
 end
 
 local function resetConfig()
-	selectedMobTypes = {}
-	selectedModifiers = {}
+	table.clear(selectedMobTypes)
+	table.clear(selectedModifiers)
 	autoFarmEnabled = false
 	gemFarmEnabled = false
 
@@ -381,29 +391,82 @@ local function teleportTo(targetObject, offset)
 	end
 end
 
-local function attackWithNatureKnife()
+-- Detection specifically targeting physical weapons (e.g. Bone Sword via AttackPhysical script)
+local function getEquippedPhysicalWeapon()
 	local char = LocalPlayer.Character
 	local backpack = LocalPlayer:FindFirstChild("Backpack")
-	local tool = (backpack and backpack:FindFirstChild("Nature Knife")) 
-		or (char and char:FindFirstChild("Nature Knife"))
 
-	if tool then
-		if char and tool.Parent ~= char then 
-			tool.Parent = char 
-		end
-
-		local attackRemote = tool:FindFirstChild("AttackPhysical")
-		if attackRemote then
-			if attackRemote:IsA("RemoteEvent") then
-				attackRemote:FireServer()
-			elseif attackRemote:IsA("RemoteFunction") then
-				attackRemote:InvokeServer()
-			elseif attackRemote:IsA("BindableEvent") then
-				attackRemote:Fire()
+	local function isPhysicalTool(tool)
+		if not tool or not tool:IsA("Tool") then return false end
+		
+		-- Check for AttackPhysical script inside tool structure
+		for _, child in ipairs(tool:GetChildren()) do
+			if child:IsA("Script") or child:IsA("LocalScript") then
+				if string.find(child.Name, "AttackPhysical") then
+					return true
+				end
 			end
 		end
 
-		tool:Activate()
+		-- Secondary fallback for physical weapon names
+		local lowerName = string.lower(tool.Name)
+		if string.find(lowerName, "sword") or string.find(lowerName, "blade") or string.find(lowerName, "dagger") or string.find(lowerName, "axe") then
+			return true
+		end
+
+		return false
+	end
+
+	-- Check equipped tools in character
+	if char then
+		for _, item in ipairs(char:GetChildren()) do
+			if isPhysicalTool(item) then
+				return item
+			end
+		end
+	end
+
+	-- Auto-equip from Backpack
+	if backpack and char then
+		for _, item in ipairs(backpack:GetChildren()) do
+			if isPhysicalTool(item) then
+				item.Parent = char
+				return item
+			end
+		end
+	end
+
+	return nil
+end
+
+local function attackWithPhysicalWeapon()
+	local weapon = getEquippedPhysicalWeapon()
+	if weapon then
+		for _, desc in ipairs(weapon:GetDescendants()) do
+			if desc:IsA("RemoteEvent") then
+				desc:FireServer()
+			elseif desc:IsA("RemoteFunction") then
+				pcall(function() desc:InvokeServer() end)
+			elseif desc:IsA("BindableEvent") then
+				desc:Fire()
+			end
+		end
+
+		weapon:Activate()
+	end
+end
+
+-- Focus-kill single target until defeated, then wait 5 seconds to collect loot
+local function killTarget(targetModel)
+	while scriptRunning and autoFarmEnabled and isValidMob(targetModel) do
+		teleportTo(targetModel)
+		attackWithPhysicalWeapon()
+		task.wait(0.08)
+	end
+
+	-- Wait 5 seconds after death to pick up dropped rewards
+	if scriptRunning and autoFarmEnabled then
+		task.wait(5)
 	end
 end
 
@@ -469,7 +532,6 @@ local function registerMobName(model)
 		local cleanName = getCleanMobName(model.Name)
 		local bossSpawnsFolder = Workspace:FindFirstChild("BossSpawns")
 		
-		-- If it's already registered as a boss, keep it as a boss
 		if knownMobTypes[cleanName] and knownMobTypes[cleanName].isBoss then
 			return
 		end
@@ -888,7 +950,7 @@ local function createTabs()
 		tabBtn.MouseButton1Click:Connect(function()
 			currentTab = modName
 			for _, btn in ipairs(tabScroll:GetChildren()) do
-				if btn:IsA("TextButton")then
+				if btn:IsA("TextButton") then
 					if btn.Name == FARM_TAB_NAME .. "Tab" then
 						btn.BackgroundColor3 = Color3.fromRGB(25, 28, 38)
 						btn.TextColor3 = Color3.fromRGB(255, 170, 0)
@@ -965,14 +1027,12 @@ task.spawn(function()
 					if not autoFarmEnabled or not scriptRunning then break end
 					if selectedModifiers[modName] and isValidMob(targetModel) then
 						foundTarget = true
-						teleportTo(targetModel)
-						attackWithNatureKnife()
-						task.wait(0.08)
+						killTarget(targetModel)
 					end
 				end
 			end
 
-			-- Priority 2: Mobs/Bosses Auto Farm Targets (Active character entities in Workspace)
+			-- Priority 2: Mobs/Bosses Auto Farm Targets
 			if not foundTarget then
 				for _, desc in ipairs(Workspace:GetDescendants()) do
 					if not autoFarmEnabled or not scriptRunning then break end
@@ -982,16 +1042,14 @@ task.spawn(function()
 							local cleanName = getCleanMobName(model.Name)
 							if selectedMobTypes[cleanName] then
 								foundTarget = true
-								teleportTo(model)
-								attackWithNatureKnife()
-								task.wait(0.08)
+								killTarget(model)
 							end
 						end
 					end
 				end
 			end
 
-			-- Priority 3: Fallback Boss Spawn Location Teleport (If boss is not currently spawned, stay at spawn location)
+			-- Priority 3: Fallback Boss Spawn Location Teleport
 			if not foundTarget and autoFarmEnabled then
 				local bossSpawnsFolder = Workspace:FindFirstChild("BossSpawns")
 				if bossSpawnsFolder then
